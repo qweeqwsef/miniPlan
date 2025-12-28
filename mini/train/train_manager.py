@@ -214,8 +214,7 @@ def train_manager(steps: int, ent: float, out_dir: str, low_root: str, seed: int
                     }
                 }
             
-            # 保存评估结果
-            eval_path = self.log_path.replace('training_curve.json', 'final_evaluation.json')
+            eval_path = os.path.join(os.path.dirname(self.log_path), f"final_evaluation_{self.forgetting_mode}_seed{self.seed}.json")
             with open(eval_path, 'w', encoding='utf-8') as f:
                 json.dump(eval_results, f, indent=2, ensure_ascii=False)
 
@@ -264,7 +263,7 @@ def train_manager(steps: int, ent: float, out_dir: str, low_root: str, seed: int
         )
         print(f"  创建新的PPO模型")
 
-    log_dir = os.path.join(out_dir, f"training_{forgetting_mode}_seed{seed}.json")
+    log_dir = os.path.join(out_dir, f"training_curve_{forgetting_mode}_seed{seed}.json")
     cb = CurveCallback(
         log_path=log_dir,
         forgetting_mode=forgetting_mode,
