@@ -339,11 +339,11 @@ class MiniManagerEnv12(gym.Env):
                 'statistics': 6
             },
             'strengths': {
-                'algebra': 0.06,
-                'geometry': 0.06,
-                'statistics': 0.06
+                'algebra': 0.07,
+                'geometry': 0.07,
+                'statistics': 0.07
             },
-            'adjust_factor': 0.5,
+            'adjust_factor': 0.6,
         }
         
         enhanced_params.update(self._fp.get('fixed', {}))
@@ -385,7 +385,7 @@ class MiniManagerEnv12(gym.Env):
         
         # IF特有参数 - Stability-Aware Threshold Forgetting
         if_params = {
-            'base_decay': 0.06,
+            'base_decay': 0.07,
             'stability_k': 8.0,
             'stability_lambda': 0.7,
         }
@@ -421,7 +421,7 @@ class MiniManagerEnv12(gym.Env):
                 effective_decay = effective_decay_base * forgetting_strength
                 
                 # 应用遗忘 (使用adjust_factor保持与FF一致的应用方式)
-                decay_multiplier = 1.0 - (effective_decay * 0.7)  # 0.7是adjust_factor
+                decay_multiplier = 1.0 - (effective_decay * 0.6)
                 for i in idxs:
                     mastery[i] = float(max(0.0, mastery[i] * decay_multiplier))
                 
@@ -823,9 +823,9 @@ class FlatMiniEnv12(gym.Env):
                 'algebra': 5, 'geometry': 4, 'statistics': 6
             },
             'strengths': {
-                'algebra': 0.06, 'geometry': 0.06, 'statistics': 0.06
+                'algebra': 0.07, 'geometry': 0.07, 'statistics': 0.07
             },
-            'adjust_factor': 0.5,
+            'adjust_factor': 0.6,
         }
         
         enhanced_params.update(self._fp.get('fixed', {}))
@@ -858,7 +858,7 @@ class FlatMiniEnv12(gym.Env):
         thresholds = {'algebra': 5, 'geometry': 4, 'statistics': 6}
         
         if_params = {
-            'base_decay': 0.06,
+            'base_decay': 0.07,
             'stability_k': 8.0,
             'stability_lambda': 0.7,
         }
@@ -889,7 +889,7 @@ class FlatMiniEnv12(gym.Env):
                 effective_decay_base = base_decay * (1.0 - lambda_factor * stability_c)
                 effective_decay = effective_decay_base * forgetting_strength
                 
-                decay_multiplier = 1.0 - (effective_decay * 0.7)  # 与分层环境完全一致
+                decay_multiplier = 1.0 - (effective_decay * 0.6)
                 for i in idxs:
                     mastery[i] = float(max(0.0, mastery[i] * decay_multiplier))
                 
