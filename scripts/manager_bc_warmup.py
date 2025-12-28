@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../mini', '..')))
 
 from mini.env.v6_mini_env import MiniManagerEnv12, FlatMiniEnv12
 
@@ -154,17 +154,17 @@ def main():
     ensure_dir(args.output)
     X, y = load_dataset(args.bc_data)
 
-    dims_skills = int(args.dims)
+    dims_data = int(X.shape[1]) if len(X.shape) == 2 else int(args.dims)
     
     if args.flat_mode:
         # Flat模式：不需要低层策略，直接使用FlatMiniEnv12
-        env = FlatMiniEnv12(tolerance=0.05, max_steps=800, seed=args.seed, 
+        env = FlatMiniEnv12(tolerance=0.05, max_steps=200, seed=args.seed, 
                            forgetting_mode=str(args.forgetting_mode), 
                            resource_enabled=bool(args.resource_enabled))
     else:
         # 分层模式：需要低层策略
-        low_policies = load_low_policies(args.low_root, dims_skills)
-        env = MiniManagerEnv12(low_policies=low_policies, tolerance=0.05, max_steps=800, 
+        low_policies = load_low_policies(args.low_root, dims_data)
+        env = MiniManagerEnv12(low_policies=low_policies, tolerance=0.05, max_steps=200, 
                               seed=args.seed, forgetting_mode=str(args.forgetting_mode), 
                               resource_enabled=bool(args.resource_enabled))
 

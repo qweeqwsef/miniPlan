@@ -1,3 +1,22 @@
+============================================================
+Python项目源码合并文件
+============================================================
+
+项目结构树状图:
+----------------------------------------
+mini/
+├── env/
+│   └── v6_mini_env.py
+├── scripts/
+│   └── manager_bc_warmup.py
+└── train/
+    ├── train_low_level.py
+    └── train_manager.py
+
+============================================================
+
+文件: env\v6_mini_env.py
+----------------------------------------
 # -*- coding: utf-8 -*-#
 """
 修复后的分层强化学习环境
@@ -36,7 +55,7 @@ class MiniSkillEnv(gym.Env):
         # 【修复1】增强观察空间（学术理由：部分可观测→全可观测）
         # 原2维：[gap, resource_fatigue]
         # 新4维：[gap, resource_fatigue, mastery_category, action_counter]
-        self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(2,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(4,), dtype=np.float32)
         self.action_space = spaces.Discrete(6)
 
         # 动作语义定义
@@ -93,7 +112,12 @@ class MiniSkillEnv(gym.Env):
         mastery = 1.0 - self.gap
         mastery_category = 0.0 if mastery <= 0.33 else (0.5 if mastery <= 0.66 else 1.0)
         
-        obs = np.array([self.gap, mastery_category], dtype=np.float32)
+        obs = np.array([
+            self.gap, 
+            resource_fatigue,
+            mastery_category,
+            0.0  # 初始动作计数器
+        ], dtype=np.float32)
         info = {}
         return obs, info
 
@@ -163,9 +187,18 @@ class MiniSkillEnv(gym.Env):
         terminated = bool(new_gap < self.tolerance)
         truncated = bool(self.step_count >= self.max_steps)
 
+        # 【修复8】计算观察时包含动作计数器
+        action_counter_norm = np.clip(self.action_counter[action] / 10.0, 0.0, 1.0)
+        resource_fatigue = self._compute_resource_fatigue()
         mastery = 1.0 - self.gap
         mastery_category = 0.0 if mastery <= 0.33 else (0.5 if mastery <= 0.66 else 1.0)
-        obs = np.array([self.gap, mastery_category], dtype=np.float32)
+        
+        obs = np.array([
+            self.gap,
+            resource_fatigue,
+            mastery_category,
+            action_counter_norm
+        ], dtype=np.float32)
         
         info = {
             "gap": self.gap, 
@@ -176,7 +209,7 @@ class MiniSkillEnv(gym.Env):
             "mastery": mastery, 
             "level": level, 
             "action_name": action_name,
-            "resource_fatigue": self._compute_resource_fatigue(),
+            "resource_fatigue": resource_fatigue,
             "resource_usage_count": self.resource_usage_count.copy(),
             "action_counter": self.action_counter.copy(),
             "action_penalty": action_penalty
@@ -247,9 +280,9 @@ class MiniManagerEnv12(gym.Env):
         
         # 修复B: 遗忘阈值 (用于计算归一化timer)
         self.forgetting_thresholds = {
-            'algebra': 5,
-            'geometry': 4,
-            'statistics': 6
+            'algebra': 4,    # 增强FF参数
+            'geometry': 3,   
+            'statistics': 5
         }
         
         self.resource_enabled = bool(resource_enabled)
@@ -270,7 +303,7 @@ class MiniManagerEnv12(gym.Env):
                 init = init.reshape(12,)
             self.gaps = np.clip(init, 0.0, 1.0)
         else:
-            self.gaps = self.np_random.uniform(0.4, 0.9, size=(12,)).astype(np.float32)
+            self.gaps = self.np_random.uniform(0.2, 0.8, size=(12,)).astype(np.float32)
         self.step_count = 0
         self._last_action = None
         for c in self.steps_since_review_cat:
@@ -334,16 +367,16 @@ class MiniManagerEnv12(gym.Env):
         # 增强参数（统一增强）
         enhanced_params = {
             'thresholds': {
-                'algebra': 5,
-                'geometry': 4,
-                'statistics': 6
+                'algebra': 4,    # 从6减少到4（更早触发遗忘）
+                'geometry': 3,   # 从4减少到3（更早触发遗忘）  
+                'statistics': 5  # 从7减少到5（更早触发遗忘）
             },
             'strengths': {
-                'algebra': 0.06,
-                'geometry': 0.06,
-                'statistics': 0.06
+                'algebra': 0.08,     # 从0.036增加到0.08（2.2倍强度）
+                'geometry': 0.08,    # 从0.036增加到0.08（2.2倍强度）
+                'statistics': 0.08   # 从0.036增加到0.08（2.2倍强度）
             },
-            'adjust_factor': 0.5,
+            'adjust_factor': 0.7,    # 从0.5增加到0.7（增强影响）
         }
         
         enhanced_params.update(self._fp.get('fixed', {}))
@@ -378,16 +411,16 @@ class MiniManagerEnv12(gym.Env):
         """修复C: 连续遗忘衰减的改进遗忘机制"""
         # 使用与增强FF相同的触发阈值（同步增强，保持与FF一致）
         thresholds = {
-            'algebra': 5,
-            'geometry': 4,
-            'statistics': 6
+            'algebra': 4,    # 与FF保持一致
+            'geometry': 3,   # 与FF保持一致
+            'statistics': 5  # 与FF保持一致
         }
         
         # IF特有参数 - Stability-Aware Threshold Forgetting
         if_params = {
-            'base_decay': 0.06,
-            'stability_k': 8.0,
-            'stability_lambda': 0.7,
+            'base_decay': 0.08,        # 与FF基础强度一致
+            'stability_k': 8.0,         # 稳定性计算参数（保持不变）
+            'stability_lambda': 0.7,    # 稳定性影响因子（保持不变）
         }
         if_params.update(self._fp.get('improved', {}))
         
@@ -441,9 +474,10 @@ class MiniManagerEnv12(gym.Env):
         # 确保必须有12个低层策略
         assert len(self.low_policies) == 12, "必须提供12个低层策略"
         # 修复A: 扩展低层观察空间 [gap, resource_fatigue, mastery_category, action_counter]
+        resource_fatigue = 0.0  # 高层不直接管理资源疲劳，设为0
         mastery = 1.0 - skill_gap
         mastery_category = 0.0 if mastery <= 0.33 else (0.5 if mastery <= 0.66 else 1.0)
-        obs_skill = np.array([skill_gap, mastery_category], dtype=np.float32)
+        obs_skill = np.array([skill_gap, resource_fatigue, mastery_category, 0.0], dtype=np.float32)
         low_policy = self.low_policies[skill_id]
         act, _ = low_policy.predict(obs_skill, deterministic=True)
         type_id = int(act)
@@ -569,7 +603,9 @@ class MiniManagerEnv12(gym.Env):
         # 【EXP15修复】Timer惩罚 - 提高惩罚系数，迫使策略必须轮换
         timer_penalty_coef = 0.0  # 默认无惩罚
         if self.forgetting_mode in ['fixed_forgetting', 'improved_forgetting']:
-            timer_penalty_coef = 2.0
+            # 只有在有遗忘机制时，Timer高了才扣分
+            # 这会逼迫Agent去压低Timer（即轮换复习）
+            timer_penalty_coef = 0.5  # 【EXP15修复】提高到0.5，迫使策略必须轮换
         
         timer_sum = self._compute_timer_sum()
         reward -= timer_penalty_coef * timer_sum  # 新增Timer惩罚
@@ -724,9 +760,9 @@ class FlatMiniEnv12(gym.Env):
         
         # 修复B: 遗忘阈值 (用于计算归一化timer)
         self.forgetting_thresholds = {
-            'algebra': 5,
-            'geometry': 4,
-            'statistics': 6
+            'algebra': 4,    # 增强FF参数
+            'geometry': 3,   
+            'statistics': 5
         }
         
         # 资源机制支持
@@ -757,7 +793,7 @@ class FlatMiniEnv12(gym.Env):
                 init = init.reshape(12,)
             self.gaps = np.clip(init, 0.0, 1.0)
         else:
-            self.gaps = self.np_random.uniform(0.4, 0.9, size=(12,)).astype(np.float32)
+            self.gaps = self.np_random.uniform(0.2, 0.8, size=(12,)).astype(np.float32)
         
         self.step_count = 0
         self._last_action = None
@@ -808,10 +844,6 @@ class FlatMiniEnv12(gym.Env):
         freq = action_hist / (action_hist.sum() + 1e-8)
         entropy = -np.sum(freq * np.log(freq + 1e-8))
         return float(entropy)
-    
-    def _compute_timer_sum(self):
-        timer_obs = self._compute_timer_observation()
-        return float(np.sum(timer_obs))
 
     def _global_success(self) -> bool:
         return bool(np.all(self.gaps < self.tolerance))
@@ -820,12 +852,12 @@ class FlatMiniEnv12(gym.Env):
         """修复C: 连续遗忘衰减的固定遗忘机制"""
         enhanced_params = {
             'thresholds': {
-                'algebra': 5, 'geometry': 4, 'statistics': 6
+                'algebra': 4, 'geometry': 3, 'statistics': 5  # 与分层环境完全一致
             },
             'strengths': {
-                'algebra': 0.06, 'geometry': 0.06, 'statistics': 0.06
+                'algebra': 0.08, 'geometry': 0.08, 'statistics': 0.08  # 与分层环境完全一致
             },
-            'adjust_factor': 0.5,
+            'adjust_factor': 0.7,  # 与分层环境完全一致
         }
         
         enhanced_params.update(self._fp.get('fixed', {}))
@@ -855,10 +887,10 @@ class FlatMiniEnv12(gym.Env):
 
     def _apply_improved_forgetting(self, mastery: np.ndarray) -> tuple[np.ndarray, dict]:
         """修复C: 连续遗忘衰减的改进遗忘机制"""
-        thresholds = {'algebra': 5, 'geometry': 4, 'statistics': 6}
+        thresholds = {'algebra': 4, 'geometry': 3, 'statistics': 5}  # 与分层环境完全一致
         
         if_params = {
-            'base_decay': 0.06,
+            'base_decay': 0.08,  # 与分层环境完全一致
             'stability_k': 8.0,
             'stability_lambda': 0.7,
         }
@@ -991,7 +1023,9 @@ class FlatMiniEnv12(gym.Env):
         # 【EXP15修复】Timer惩罚 - 提高惩罚系数，迫使策略必须轮换
         timer_penalty_coef = 0.0  # 默认无惩罚
         if self.forgetting_mode in ['fixed_forgetting', 'improved_forgetting']:
-            timer_penalty_coef = 2.0
+            # 只有在有遗忘机制时，Timer高了才扣分
+            # 这会逼迫Agent去压低Timer（即轮换复习）
+            timer_penalty_coef = 0.5  # 【EXP15修复】提高到0.5，迫使策略必须轮换
         
         timer_sum = self._compute_timer_sum()
         reward -= timer_penalty_coef * timer_sum  # 新增Timer惩罚
@@ -1067,3 +1101,736 @@ class FlatMiniEnv12(gym.Env):
             self.history_buffer_cat[cat] = hb
             
         return obs, reward, terminated, truncated, info
+============================================================
+
+文件: scripts\manager_bc_warmup.py
+----------------------------------------
+# -*- coding: utf-8 -*-
+import os
+import json
+import argparse
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../mini', '..')))
+
+from mini.env.v6_mini_env import MiniManagerEnv12, FlatMiniEnv12
+
+
+def ensure_dir(p):
+    os.makedirs(p, exist_ok=True)
+
+
+def load_low_policies(low_root: str, dims: int):
+    from stable_baselines3 import PPO
+    low_policies = []
+    for i in range(dims):
+        path = os.path.join(low_root, f"skill{i}", "policy.zip")
+        if not os.path.exists(path):
+            continue
+        low_policies.append(PPO.load(path))
+    return low_policies
+
+
+def load_dataset(jsonl_path: str):
+    X, y = [], []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            rec = json.loads(line)
+            X.append(np.array(rec["obs"], dtype=np.float32))
+            y.append(int(rec["action"]))
+    X = np.stack(X, axis=0)
+    y = np.array(y, dtype=np.int64)
+    return X, y
+
+
+def supervised_warmup(model, X: np.ndarray, y: np.ndarray, epochs: int = 8, lr: float = 3e-4, batch_size: int = 256, log_path: str = None):
+    """
+    改进3: BC decay - BC loss系数随训练步数衰减至0
+    增强数据记录：记录BC训练过程中的策略演化数据
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.policy.to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = model.policy.optimizer if hasattr(model.policy, "optimizer") else optim.Adam(model.policy.parameters(), lr=lr)
+
+    dataset = torch.utils.data.TensorDataset(torch.from_numpy(X), torch.from_numpy(y))
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+
+    model.policy.train()
+    
+    # 改进3: 计算总训练步数用于BC decay
+    total_steps = len(loader) * epochs
+    bc_decay_steps = total_steps  # BC在所有步数内衰减至0
+    initial_bc_coef = 1.0
+    
+    # 增强数据记录：BC训练过程记录
+    bc_evolution = []
+    
+    step_count = 0
+    for epoch in range(epochs):
+        # 动态获取动作空间大小
+        action_space_size = model.env.action_space.n if hasattr(model.env, 'action_space') else 12
+        
+        epoch_metrics = {
+            'epoch': epoch,
+            'loss': 0.0,
+            'accuracy': 0.0,
+            'action_distribution': np.zeros(action_space_size)
+        }
+        
+        for batch_idx, (xb, yb) in enumerate(loader):
+            xb = xb.to(device)
+            yb = yb.to(device)
+            
+            # 改进3: 计算BC系数衰减
+            bc_coef = initial_bc_coef * max(0.0, 1.0 - step_count / bc_decay_steps)
+            
+            # 前向：提取特征 → pi → logits
+            features = model.policy.extract_features(xb)
+            latent_pi, latent_vf = model.policy.mlp_extractor(features)
+            logits = model.policy.action_net(latent_pi)
+            loss = criterion(logits, yb) * bc_coef  # 应用衰减系数
+            
+            # 计算准确率和动作分布
+            with torch.no_grad():
+                pred = torch.argmax(logits, dim=1)
+                accuracy = (pred == yb).float().mean().item()
+                
+                # 记录动作分布
+                probs = torch.softmax(logits, dim=-1).cpu().numpy()
+                epoch_metrics['action_distribution'] += np.sum(probs, axis=0)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            epoch_metrics['loss'] += loss.item()
+            epoch_metrics['accuracy'] += accuracy
+            
+            # 记录详细的训练数据
+            if step_count % 10 == 0:  # 每10步记录一次
+                bc_evolution.append({
+                    "step": step_count,
+                    "epoch": epoch,
+                    "batch": batch_idx,
+                    "bc_coef": bc_coef,
+                    "loss": loss.item(),
+                    "accuracy": accuracy,
+                    "lr": optimizer.param_groups[0]['lr'] if hasattr(optimizer, 'param_groups') else lr
+                })
+            
+            step_count += 1
+        
+        # 归一化分布和计算epoch平均值
+        epoch_metrics['action_distribution'] = (
+            epoch_metrics['action_distribution'] / 
+            np.sum(epoch_metrics['action_distribution'])
+        ).tolist()
+        epoch_metrics['loss'] /= len(loader)
+        epoch_metrics['accuracy'] /= len(loader)
+        epoch_metrics['final_bc_coef'] = bc_coef
+        epoch_metrics['total_batches'] = len(loader)
+        
+        bc_evolution.append(epoch_metrics)
+        
+        print(f"BC Epoch {epoch+1}/{epochs}: Loss={epoch_metrics['loss']:.4f}, Acc={epoch_metrics['accuracy']:.3f}, BC_coef={bc_coef:.3f}")
+    
+    # 保存BC演化数据
+    if log_path:
+        with open(log_path, 'w', encoding='utf-8') as f:
+            json.dump(bc_evolution, f, indent=2, ensure_ascii=False)
+    
+    return model
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bc-data", type=str, default="mini/data/manager_bc.jsonl")
+    parser.add_argument("--low-root", type=str, default="mini/results/low")
+    parser.add_argument("--output", type=str, default="mini/results/manager_bc_init")
+    parser.add_argument("--seed", type=int, default=777)
+    parser.add_argument("--dims", type=int, default=12)
+    parser.add_argument("--resource-enabled", action="store_true")
+    parser.add_argument("--forgetting-mode", type=str, default='no_forgetting')
+    parser.add_argument("--flat-mode", action="store_true", help="Use Flat environment for BC warmup")
+    args = parser.parse_args()
+
+    ensure_dir(args.output)
+    X, y = load_dataset(args.bc_data)
+
+    dims_data = int(X.shape[1]) if len(X.shape) == 2 else int(args.dims)
+    
+    if args.flat_mode:
+        # Flat模式：不需要低层策略，直接使用FlatMiniEnv12
+        env = FlatMiniEnv12(tolerance=0.05, max_steps=200, seed=args.seed, 
+                           forgetting_mode=str(args.forgetting_mode), 
+                           resource_enabled=bool(args.resource_enabled))
+    else:
+        # 分层模式：需要低层策略
+        low_policies = load_low_policies(args.low_root, dims_data)
+        env = MiniManagerEnv12(low_policies=low_policies, tolerance=0.05, max_steps=200, 
+                              seed=args.seed, forgetting_mode=str(args.forgetting_mode), 
+                              resource_enabled=bool(args.resource_enabled))
+
+    from stable_baselines3 import PPO
+    model = PPO(
+        policy="MlpPolicy",
+        env=env,
+        learning_rate=3e-4,
+        n_steps=256,
+        batch_size=256,
+        n_epochs=10,
+        gamma=0.99,
+        ent_coef=0.05,
+        seed=args.seed,
+        verbose=0,
+        policy_kwargs=dict(net_arch=[128, 128])  # 与管理者训练保持一致
+    )
+
+    # 创建结果目录结构
+    mode_dir = os.path.join(args.output, f"manager_{args.forgetting_mode}")  # 统一目录结构
+    ensure_dir(mode_dir)
+    
+    bc_log_path = os.path.join(args.output, f"manager_{args.forgetting_mode}", f"bc_evolution_seed{args.seed}.json")  # 与训练曲线同目录
+    supervised_warmup(model, X, y, epochs=8, lr=3e-4, batch_size=256, log_path=bc_log_path)
+    
+    out_path = os.path.join(mode_dir, f"manager_bc_seed{args.seed}.zip")
+    model.save(out_path)
+    
+    # 生成BC阶段汇总
+    bc_summary = {
+        "forgetting_mode": args.forgetting_mode,
+        "seed": args.seed,
+        "total_epochs": 8,
+        "total_samples": len(X),
+        "bc_decay_applied": True,
+        "flat_mode": args.flat_mode
+    }
+    
+    summary_file = os.path.join(mode_dir, f"bc_summary_{args.forgetting_mode}_seed{args.seed}.json")
+    with open(summary_file, "w", encoding="utf-8") as f:
+        json.dump(bc_summary, f, indent=2, ensure_ascii=False)
+    
+    print(f"BC预热完成！模型保存至: {out_path}")
+    print(f"训练日志保存至: {bc_log_path}")
+
+
+if __name__ == "__main__":
+    main()
+
+============================================================
+
+文件: train\train_low_level.py
+----------------------------------------
+# -*- coding: utf-8 -*-
+import os
+import json
+import argparse
+import numpy as np
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../mini', '..')))
+
+from mini.env.v6_mini_env import MiniSkillEnv
+
+
+def ensure_dir(p):
+    os.makedirs(p, exist_ok=True)
+
+
+def train_one_skill(skill_id: int, steps: int, ent: float, out_dir: str, seed: int = 777):
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import BaseCallback
+    import torch.nn as nn
+
+    # 【关键1】每个技能独立但确定的种子
+    unique_seed = 777 + skill_id * 1000  # 非随机！确保可重复性
+    
+    env = MiniSkillEnv(tolerance=0.05, max_steps=200, seed=unique_seed)
+    ensure_dir(out_dir)
+
+    class CurveCallback(BaseCallback):
+        def __init__(self):
+            super().__init__()
+            self.rows = []
+
+        def _on_step(self) -> bool:
+            # 使用 ep_info_buffer 提取平均奖励与长度
+            try:
+                ep_info = self.model.ep_info_buffer
+                if len(ep_info) > 0:
+                    r = np.mean([x['r'] for x in ep_info])
+                    l = np.mean([x['l'] for x in ep_info])
+                else:
+                    r, l = 0.0, 0.0
+                self.rows.append({"step": int(self.num_timesteps), "ep_rew_mean": float(r), "ep_len_mean": float(l)})
+            except Exception:
+                pass
+            return True
+
+    # 【修复9】调整训练参数 - 改为单阶段1500步，ent=0.08
+    model = PPO(
+        policy="MlpPolicy",
+        env=env,
+        learning_rate=3e-4,        # 保持学习率
+        n_steps=2048,              # 保持采样步数
+        batch_size=64,             # 保持batch size
+        n_epochs=4,                # 保持epoch数
+        gamma=0.99,
+        ent_coef=0.2,              # 【EXP15修复】强制探索，防止动作单一
+        seed=unique_seed,
+        verbose=0,
+        policy_kwargs=dict(
+            net_arch=[128, 128],   # 保持网络容量
+            activation_fn=nn.Tanh,
+            ortho_init=True
+        )
+    )
+    
+    # 【EXP15修复】改为3000步训练，充分探索
+    print(f"训练技能{skill_id}: 单阶段训练3000步")
+    cb = CurveCallback()
+    model.learn(total_timesteps=3000, callback=cb, reset_num_timesteps=False)
+    
+    # 【修复11】立即评估并保存
+    success_count = 0
+    action_dist = np.zeros(6)
+    
+    for _ in range(30):  # 30个episode评估
+        obs, _ = env.reset()
+        done = False
+        while not done:
+            act, _ = model.predict(obs, deterministic=True)
+            action_dist[act] += 1
+            obs, _, terminated, truncated, _ = env.step(int(act))
+            done = terminated or truncated
+            if terminated:
+                success_count += 1
+    
+    success_rate = success_count / 30.0
+    
+    # 【修复12】只有动作多样且成功率高才保存
+    action_dist_norm = action_dist / (action_dist.sum() + 1e-8)
+    action_entropy = -np.sum(action_dist_norm * np.log(action_dist_norm + 1e-8))
+    
+    print(f"技能{skill_id}评估: 成功率={success_rate:.2%}, 动作熵={action_entropy:.3f}")
+    print(f"  动作分布: {action_dist}")
+    
+    # 【EXP15修复】只要成功就保存，降低坍缩模型被丢弃的概率
+    if success_rate > 0.5:  # 主要靠高熵和高步数来减少坍缩发生
+        model.save(os.path.join(out_dir, "policy.zip"))
+        print(f"技能{skill_id}保存成功")
+    else:
+        print(f"警告: 技能{skill_id}成功率过低，但仍然保存...")
+        # 即使成功率低也保存，避免训练失败
+        model.save(os.path.join(out_dir, "policy.zip"))
+
+    # 保存训练曲线和评估指标
+    with open(os.path.join(out_dir, "training_curve.json"), "w", encoding="utf-8") as f:
+        json.dump(cb.rows, f, indent=2, ensure_ascii=False)
+
+    metrics = {
+        "skill_id": skill_id,
+        "success_rate": success_rate,
+        "action_entropy": action_entropy,
+        "action_dist": action_dist.tolist()
+    }
+    with open(os.path.join(out_dir, "eval_metrics.json"), "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--steps", type=int, default=10000)
+
+    parser.add_argument("--ent", type=float, default=0.01)
+    parser.add_argument("--output", type=str, default="mini/results/low")
+    parser.add_argument("--seed", type=int, default=777)
+    parser.add_argument("--num-skills", type=int, default=12)
+    args = parser.parse_args()
+
+    ensure_dir(args.output)
+    for skill_id in range(int(args.num_skills)):
+        out_dir = os.path.join(args.output, f"skill{skill_id}")
+        train_one_skill(skill_id, args.steps, args.ent, out_dir, seed=args.seed)
+
+
+if __name__ == "__main__":
+    main()
+
+============================================================
+
+文件: train\train_manager.py
+----------------------------------------
+# -*- coding: utf-8 -*-
+import os
+import json
+import argparse
+import numpy as np
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../mini', '..')))
+
+from mini.env.v6_mini_env import MiniManagerEnv12, FlatMiniEnv12
+
+
+def ensure_dir(p):
+    os.makedirs(p, exist_ok=True)
+
+
+def load_low_policies(low_root: str, dims: int):
+    from stable_baselines3 import PPO
+    low_policies = []
+    missing = []
+    print(f"  开始加载底层策略，路径: {low_root}")
+    
+    for i in range(int(dims)):
+        policy_path = os.path.join(low_root, f"skill{i}", "policy.zip")
+        if os.path.exists(policy_path):
+            try:
+                policy = PPO.load(policy_path)
+                low_policies.append(policy)
+                print(f"  成功加载 skill{i}: {policy_path}")
+            except Exception as e:
+                print(f"  加载 skill{i} 失败: {e}")
+                missing.append(policy_path)
+        else:
+            print(f"  文件不存在: {policy_path}")
+            missing.append(policy_path)
+    
+    print(f"  总计加载 {len(low_policies)}/{dims} 个底层策略")
+    
+    if int(dims) == 12 and len(low_policies) != int(dims):
+        print(f"  错误：缺失的策略文件: {missing}")
+        raise FileNotFoundError(f"Expected 12 low-level PPO policies; missing: {missing}")
+    
+    return low_policies
+
+
+def train_manager(steps: int, ent: float, out_dir: str, low_root: str, seed: int = 777, max_steps: int = 200, init_from: str | None = None, dims: int = 4, forgetting_mode: str = 'no_forgetting', resource_enabled: bool = False, resource_decay_range: tuple | list = (0.2, 0.4), match_bonus: float = 0.2, mismatch_penalty: float = 0.1, timing_bonus: float = 0.03, timing_penalty: float = 0.03, difficulty_bins: tuple | list = (0.33, 0.66), flat_mode: bool = False):
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import BaseCallback
+    from stable_baselines3.common.vec_env import DummyVecEnv
+
+    ensure_dir(out_dir)
+    
+    # 修复：预先加载低层策略，避免在环境创建时丢失
+    low_policies = None
+    if not flat_mode:
+        low_policies = load_low_policies(low_root, dims)
+        print(f"  成功加载 {len(low_policies)} 个低层策略用于训练")
+    
+    # 修复：创建环境工厂函数，确保low_policies正确传递
+    def make_env():
+        if flat_mode:
+            return FlatMiniEnv12(
+                tolerance=0.05,
+                max_steps=max_steps,
+                seed=seed,
+                forgetting_mode=str(forgetting_mode),
+                resource_enabled=bool(resource_enabled),
+                resource_decay_range=tuple(resource_decay_range),
+                match_bonus=float(match_bonus),
+                mismatch_penalty=float(mismatch_penalty),
+                timing_bonus=float(timing_bonus),
+                timing_penalty=float(timing_penalty),
+                difficulty_bins=tuple(difficulty_bins)
+            )
+        else:
+            return MiniManagerEnv12(
+                low_policies=low_policies,  # 使用预加载的策略
+                tolerance=0.05,
+                max_steps=max_steps,
+                seed=seed,
+                forgetting_mode=str(forgetting_mode),
+                resource_enabled=bool(resource_enabled),
+                resource_decay_range=tuple(resource_decay_range),
+                match_bonus=float(match_bonus),
+                mismatch_penalty=float(mismatch_penalty),
+                timing_bonus=float(timing_bonus),
+                timing_penalty=float(timing_penalty),
+                difficulty_bins=tuple(difficulty_bins)
+            )
+    
+    # 使用DummyVecEnv包装环境，确保兼容性
+    env = DummyVecEnv([make_env])
+    
+    print(f"  环境创建成功，类型: DummyVecEnv")
+    if not flat_mode:
+        print(f"  环境中的低层策略数量: {len(low_policies)}")
+
+    # 【修复22】添加训练回调监控坍缩
+    class AntiCollapseCallback(BaseCallback):
+        def __init__(self, check_freq=1000):
+            super().__init__()
+            self.check_freq = check_freq
+            self.action_counts = np.zeros(env.envs[0].action_space.n)
+            
+        def _on_step(self):
+            if self.n_calls % self.check_freq == 0:
+                # 检查动作分布
+                if len(self.model.ep_info_buffer) > 0:
+                    recent_actions = self.model.rollout_buffer.actions[-100:] if hasattr(self.model.rollout_buffer, 'actions') else []
+                    if len(recent_actions) > 0:
+                        unique_actions = np.unique(recent_actions)
+                        diversity = len(unique_actions) / env.envs[0].action_space.n
+                        if diversity < 0.3:  # 如果动作多样性低于30%
+                            print(f"警告：动作多样性低 ({diversity:.2%})，增加熵系数")
+                            self.model.ent_coef = min(0.15, self.model.ent_coef * 1.5)
+            return True
+
+    class CurveCallback(BaseCallback):
+        def __init__(self, log_path, forgetting_mode, seed):
+            super().__init__()
+            self.rows = []
+            self.log_path = log_path
+            self.forgetting_mode = forgetting_mode
+            self.seed = seed
+            # 确保目录存在
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        
+        def _on_step(self) -> bool:
+            if len(self.model.ep_info_buffer) > 0:
+                # 基础指标
+                ep_info = self.model.ep_info_buffer[-1]
+                r = ep_info['r']
+                l = ep_info['l']
+                
+                # 从info字典提取诊断指标
+                info = ep_info.get('info', {})
+                diag = {
+                    'gap_variance': info.get('gap_variance', 0.0),
+                    'action_entropy': info.get('action_entropy', 0.0),
+                    'timer_mean': info.get('timer_mean', 0.0),
+                    'timer_std': info.get('timer_std', 0.0),
+                    'forgetting_triggers': info.get('forgetting_triggers', {}),
+                    'effective_decay_cat': info.get('effective_decay_cat', {}),
+                    'steps_since_review_cat': info.get('steps_since_review_cat', {}),
+                    'action_freq': info.get('action_freq', []),
+                    'forgetting_events': {cat: bool(v) for cat, v in info.get('forgetting_event', {}).items()}
+                }
+                
+                # 合并记录
+                self.rows.append({
+                    "step": int(self.num_timesteps),
+                    "ep_rew_mean": float(r),
+                    "ep_len_mean": float(l),
+                    "forgetting_mode": self.forgetting_mode,
+                    "seed": self.seed,
+                    **diag
+                })
+            return True
+        
+        def _on_training_end(self):
+            # 保存完整训练曲线
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                json.dump(self.rows, f, indent=2, ensure_ascii=False)
+            
+            # 自动运行最终评估
+            self._run_final_evaluation()
+        
+        def _run_final_evaluation(self):
+            """训练结束后自动运行50 episode评估"""
+            env = self.training_env.envs[0]
+            model = self.model
+            
+            eval_results = {
+                'nf_eval': {'success_rate': 0, 'avg_steps': 0, 'metrics': {}},
+                'ff_eval': {'success_rate': 0, 'avg_steps': 0, 'metrics': {}},
+                'if_eval': {'success_rate': 0, 'avg_steps': 0, 'metrics': {}}
+            }
+            
+            for eval_mode in ['no_forgetting', 'fixed_forgetting', 'improved_forgetting']:
+                env.forgetting_mode = eval_mode
+                successes = 0
+                total_steps = 0
+                metrics_accum = {
+                    'gap_variance': [],
+                    'forgetting_triggers': {'algebra':0,'geometry':0,'statistics':0}
+                }
+                
+                for _ in range(50):
+                    obs, info = env.reset()
+                    done = False
+                    steps = 0
+                    
+                    while not done and steps < env.max_steps:
+                        action, _ = model.predict(obs, deterministic=True)
+                        obs, reward, terminated, truncated, info = env.step(action)
+                        done = terminated or truncated
+                        steps += 1
+                    
+                    successes += 1 if terminated else 0
+                    total_steps += steps
+                    
+                    # 收集指标
+                    metrics_accum['gap_variance'].append(info.get('gap_variance', 0.0))
+                    for cat in ['algebra','geometry','statistics']:
+                        metrics_accum['forgetting_triggers'][cat] += info.get('forgetting_triggers', {}).get(cat, 0)
+                
+                # 计算平均值
+                key = f"{eval_mode[:2]}_eval"
+                eval_results[key] = {
+                    'success_rate': successes / 50.0,
+                    'avg_steps': total_steps / 50.0,
+                    'metrics': {
+                        'avg_gap_variance': np.mean(metrics_accum['gap_variance']),
+                        'total_forgetting_triggers': metrics_accum['forgetting_triggers']
+                    }
+                }
+            
+            eval_path = os.path.join(os.path.dirname(self.log_path), f"final_evaluation_{self.forgetting_mode}_seed{self.seed}.json")
+            with open(eval_path, 'w', encoding='utf-8') as f:
+                json.dump(eval_results, f, indent=2, ensure_ascii=False)
+
+    # 【修复20】调整网络架构和训练参数
+    if flat_mode:
+        policy_kwargs = dict(net_arch=[256, 256])  # 减少一层
+        effective_ent = max(0.30, ent)  # 【EXP15修复】极高熵，强制探索（扁平）
+    else:
+        policy_kwargs = dict(net_arch=[128, 128])  # 适中大小
+        effective_ent = max(0.20, ent)  # 【EXP15修复】极高熵，强制探索（分层）
+
+    if init_from and os.path.exists(init_from):
+        # 修复：先创建模型，再加载参数，避免环境重新包装
+        # 【修复21】使用更高的初始熵系数
+        model = PPO(
+            policy="MlpPolicy",
+            env=env,
+            learning_rate=2e-4,
+            n_steps=512,          # 增加采样频率
+            batch_size=128,
+            n_epochs=8,
+            gamma=0.99,
+            ent_coef=effective_ent,  # 使用调整后的熵系数
+            seed=seed,
+            verbose=1,            # 显示训练日志
+            policy_kwargs=policy_kwargs
+        )
+        
+        # 加载预训练的参数
+        pretrained_model = PPO.load(init_from)
+        model.policy.load_state_dict(pretrained_model.policy.state_dict())
+        print(f"  从 {init_from} 加载策略参数到新模型")
+    else:
+        model = PPO(
+            policy="MlpPolicy",
+            env=env,
+            learning_rate=2e-4,
+            n_steps=512,          # 增加采样频率
+            batch_size=128,
+            n_epochs=8,
+            gamma=0.99,
+            ent_coef=effective_ent,  # 使用调整后的熵系数
+            seed=seed,
+            verbose=1,            # 显示训练日志
+            policy_kwargs=policy_kwargs
+        )
+        print(f"  创建新的PPO模型")
+
+    log_dir = os.path.join(out_dir, f"training_curve_{forgetting_mode}_seed{seed}.json")
+    cb = CurveCallback(
+        log_path=log_dir,
+        forgetting_mode=forgetting_mode,
+        seed=seed
+    )
+    
+    # 【EXP15修复】单阶段训练，全程高熵，防止坍缩
+    if flat_mode:
+        # FLAT_IF模型：全程高熵
+        stages = [
+            (14500, effective_ent),  # 全程高熵
+        ]
+    else:
+        # 分层模型：全程高熵
+        stages = [
+            (13000, effective_ent),  # 全程高熵
+        ]
+    
+    total_trained = 0
+    for stage_steps, stage_ent in stages:
+        model.ent_coef = stage_ent
+        print(f"训练阶段: {stage_steps}步, 熵系数={stage_ent:.3f}")
+        model.learn(
+            total_timesteps=stage_steps,
+            callback=[AntiCollapseCallback(), cb],
+            reset_num_timesteps=False
+        )
+        total_trained += stage_steps
+        
+        # 阶段评估
+        if not flat_mode:
+            # 简单评估
+            env_single = env.envs[0]
+            success_count = 0
+            for _ in range(20):
+                obs, _ = env_single.reset()
+                done = False
+                steps = 0
+                while not done and steps < max_steps:
+                    action, _ = model.predict(obs, deterministic=True)
+                    obs, reward, terminated, truncated, info = env_single.step(action)
+                    done = terminated or truncated
+                    steps += 1
+                success_count += 1 if terminated else 0
+            
+            success_rate = success_count / 20.0
+            print(f"阶段完成，快速评估成功率: {success_rate:.2%}")
+            if success_rate < 0.1 and total_trained > 5000:
+                print("警告：成功率过低，考虑调整")
+
+    # 创建结果目录结构
+    mode_dir = os.path.join(out_dir, f"manager_{forgetting_mode}")
+    ensure_dir(mode_dir)
+    
+    model.save(os.path.join(mode_dir, f"manager_policy_seed{seed}.zip"))
+    
+    print(f"训练完成！结果保存在: {mode_dir}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--steps", type=int, default=10000)
+    parser.add_argument("--ent", type=float, default=0.02)
+    parser.add_argument("--output", type=str, default="mini/results/manager")
+    parser.add_argument("--low-root", type=str, default="mini/results/low")
+    parser.add_argument("--seed", type=int, default=777)
+    parser.add_argument("--max-steps", type=int, default=800)  # 修改默认值为800
+    parser.add_argument("--init-from", type=str, default=None)
+    parser.add_argument("--dims", type=int, default=12)
+    parser.add_argument("--forgetting-mode", type=str, default='no_forgetting')
+    parser.add_argument("--resource-enabled", action="store_true")
+    parser.add_argument("--resource-decay-range", type=float, nargs=2, default=[0.2, 0.4])
+    parser.add_argument("--match-bonus", type=float, default=0.2)
+    parser.add_argument("--mismatch-penalty", type=float, default=0.1)
+    parser.add_argument("--timing-bonus", type=float, default=0.03)
+    parser.add_argument("--timing-penalty", type=float, default=0.03)
+    parser.add_argument("--difficulty-bins", type=float, nargs=2, default=[0.33, 0.66])
+    parser.add_argument("--flat-mode", action="store_true", help="Use Flat environment (no hierarchy)")
+    args = parser.parse_args()
+
+    ensure_dir(args.output)
+    train_manager(
+        args.steps,
+        args.ent,
+        args.output,
+        args.low_root,
+        seed=args.seed,
+        max_steps=args.max_steps,
+        init_from=args.init_from,
+        dims=args.dims,
+        forgetting_mode=args.forgetting_mode,
+        resource_enabled=bool(args.resource_enabled),
+        resource_decay_range=tuple(args.resource_decay_range),
+        match_bonus=args.match_bonus,
+        mismatch_penalty=args.mismatch_penalty,
+        timing_bonus=args.timing_bonus,
+        timing_penalty=args.timing_penalty,
+        difficulty_bins=tuple(args.difficulty_bins),
+        flat_mode=args.flat_mode
+    )
+
+
+if __name__ == "__main__":
+    main()

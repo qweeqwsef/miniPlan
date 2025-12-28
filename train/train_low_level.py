@@ -4,7 +4,7 @@ import json
 import argparse
 import numpy as np
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../mini', '..')))
 
 from mini.env.v6_mini_env import MiniSkillEnv
 

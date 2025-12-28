@@ -64,7 +64,7 @@ def generate_tree_structure(files):
         file_name = os.path.basename(file)
 
         if dir_name == '':
-            dir_name = '.'
+            dir_name = 'mini'
 
         if dir_name not in dir_structure:
             dir_structure[dir_name] = []
